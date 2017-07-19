@@ -10,22 +10,55 @@
  * Once all the threads have completed the main function
  * returns the result of the threads.
  */
-#include <stdlib.h>
 #include <stdio.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
 #include <pthread.h>
+#include <stdlib.h>
 
 #include "thread_functions.h"
 
 #define TH_NO 15
 
+//Storage for number of each type of thread
+typedef struct thread_types{
+	int decrementer, incrementer, reader;
+} Types;
 
+/*
+ * Function to update the storage of the number
+ * of threads of each kind. Accepts an initialised
+ * struct of Types, matches 'thread' against reader/
+ * writer, updates record and returns new id.
+ */
+int thread_id(Types *arg, int thread){
+
+	switch (thread){
+		case 0:
+			arg->reader += 1;
+			return arg->reader;
+		case 1 :
+			arg->decrementer +=1;
+			return arg->decrementer;
+		case 2:
+			arg->incrementer += 1;
+			return arg->incrementer;
+	}
+	perror("Problem in thread_id switch");
+	exit(EXIT_FAILURE);
+}
 
 typedef struct shared_data {
-	int sum;
-	int reader_count;
-	int last_inc;
-	int last_dec;
-	int writes;
+	int *sum;
+	int *reader_count;
+	int *last_inc;
+	int *last_dec;
+	int *writes;
+
+	int thread_id;
 
 	pthread_mutex_t sum_lock; //lock sum
 	pthread_mutex_t read_lock; //lock for reader count
@@ -38,16 +71,19 @@ void * wrtr_dec( void * );
 int main(int argc, char * argv[]){
 
 	int i;
+	int total, rcount, lst_inc, lst_dec, no_writes;
+	total = rcount = no_writes = 0;
+
 	/*
 	 * Shared data
 	 */
 	s_data shared;
 
-	shared.sum = 0;
-	shared.writes = 0;
-	shared.last_dec = 0;
-	shared.last_inc = 0;
-	shared.reader_count = 0;
+	shared.sum = &total;
+	shared.reader_count = &rcount;
+	shared.writes = &no_writes;
+	shared.last_inc = &lst_inc;
+	shared.last_dec = &lst_dec;
 
 	/*
 	 * Create locks
@@ -58,10 +94,14 @@ int main(int argc, char * argv[]){
 	 * Create threads
 	 */
 	pthread_t thread[TH_NO];
+	//keep track of how many threads of each kind.
+	Types threads;
+	threads.incrementer = threads.decrementer = threads.reader = 0;
 
 	void * (*pmain[3])(void *) = {reader, wrtr_dec, wrtr_inc};
 	for(i = 0; i < TH_NO; i++){
 		int thread_type = rand() %3;
+		shared.thread_id = thread_id(&threads, thread_type);
 		if(pthread_create(&thread[i],NULL,pmain[thread_type],&shared) != 0){
 			fprintf(stderr, "Thread creation failed in client\n");
 			exit(EXIT_FAILURE);
@@ -81,8 +121,8 @@ int main(int argc, char * argv[]){
 				   "\tLast decrementer: %d\n"
 				   "\tTotal writers: %d\n"
 				   "\tSum: %d\n",
-		   shared.last_inc, shared.last_dec,
-		   shared.writes, shared.sum);
+		   lst_inc, lst_dec,
+		   no_writes, total);
 
 	return 1;
 }
@@ -97,20 +137,22 @@ void *reader( void *arg ){
 	//lock reader count
 	pthread_mutex_lock (&input.read_lock);
 
-	input.reader_count++;
+	(*input.reader_count) ++;
 
-	if( input.reader_count == 1 )
+	if( *input.reader_count == 1 ){
 		//lock data for reading
 		pthread_mutex_lock (&input.sum_lock);
-		//unlock reader counter
-		pthread_mutex_unlock (&input.read_lock);
-		//read the locked data
-		fprintf(stderr, "Reader %d got %d\n", (int)pthread_self(), input.sum );
-		//	lock the reader counter
-		pthread_mutex_lock(&input.read_lock);
-		input.reader_count--;
+	}
 
-	if( input.reader_count == 0 )
+	//unlock reader counter
+	pthread_mutex_unlock (&input.read_lock);
+	//read the locked data
+	fprintf(stderr, "Reader %d got %d\n", input.thread_id, *input.sum );
+	//	lock the reader counter
+	pthread_mutex_lock(&input.read_lock);
+	(*input.reader_count)--;
+
+	if( *input.reader_count == 0 )
 		//unlock data_lock
 		pthread_mutex_unlock (&input.read_lock);
 
@@ -130,11 +172,13 @@ void *wrtr_dec( void *arg ){
 
 	/* lock the data	*/
 	pthread_mutex_lock (&input.sum_lock);
+
 	/* write to the data	*/
-	input.sum --;
-	input.writes ++;
-	input.last_dec = (int)pthread_self();
-	fprintf(stderr, "Decrementer %d set sum = %d\n", input.last_dec, input.sum);
+	(*input.sum) --;
+	(*input.writes) ++;
+	*input.last_dec = input.thread_id;
+	fprintf(stderr, "Decrementer %d set sum = %d\n", *input.last_dec, *input.sum);
+
 	/* unlock the data	*/
 	pthread_mutex_unlock (&input.sum_lock);
 	pthread_exit (NULL);
@@ -150,10 +194,10 @@ void *wrtr_inc( void *arg ){
 	/* lock the data	*/
 	pthread_mutex_lock (&input.sum_lock);
 	/* write to the data	*/
-	input.sum ++;
-	input.writes ++;
-	input.last_inc = pthread_self();
-	fprintf(stderr, "Incrementer %d set sum = %d\n", input.last_dec, input.sum);
+	(*input.sum) ++;
+	(*input.writes) ++;
+	*input.last_inc = input.thread_id;
+	fprintf(stderr, "Incrementer %d set sum = %d\n", *input.last_dec, *input.sum);
 	/* unlock the data	*/
 	pthread_mutex_unlock (&input.sum_lock);
 	pthread_exit (NULL);
