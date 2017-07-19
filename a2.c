@@ -19,7 +19,6 @@
 #include <pthread.h>
 #include <stdlib.h>
 
-#include "thread_functions.h"
 
 #define TH_NO 50
 
@@ -105,6 +104,10 @@ int main(int argc, char * argv[]){
 	int total, rcount, lst_inc, lst_dec, no_writes;
 	total = rcount = no_writes = 0;
 
+	//keep track of how many of each thread type
+	//0 - reader, 1 - dec, 2 - inc
+	int census[3] = {0,0,0};
+
 	/*
 	 * Shared data
 	 */
@@ -134,6 +137,16 @@ int main(int argc, char * argv[]){
 	for(i = 0; i < TH_NO; i++){
 		int thread_type = rand() %3;
 		shared.thread_id = thread_id(&threads, thread_type);
+		switch (thread_type){
+			case 0:
+				census[0] ++;
+				break;
+			case 1:
+				census[1] ++;
+				break;
+			case 2:
+				census[2] ++;
+		}
 		if(pthread_create(&thread[i],NULL,pmain[thread_type],&shared) != 0){
 			fprintf(stderr, "Thread creation failed in client\n");
 			exit(EXIT_FAILURE);
@@ -148,6 +161,8 @@ int main(int argc, char * argv[]){
 /*
  * Output results
  */
+	printf("There were %d readers, %d incrementers and %d decrementers\n", census[0], census[2], census[1]);
+
 	printf("The final state of the data is:\n"
 				   "\tLast incrementer: %d\n"
 				   "\tLast decrementer: %d\n"
