@@ -21,7 +21,7 @@
 
 #include "thread_functions.h"
 
-#define TH_NO 15
+#define TH_NO 50
 
 //Storage for number of each type of thread
 typedef struct thread_types{
@@ -60,13 +60,44 @@ typedef struct shared_data {
 
 	int thread_id;
 
-	pthread_mutex_t sum_lock; //lock sum
-	pthread_mutex_t read_lock; //lock for reader count
+	pthread_mutex_t data_lock; //lock sum
+	pthread_mutex_t read_lock; //lock sum
+
 } s_data;
 
+/*	Thread types */
 void * reader( void * );
 void * wrtr_inc( void * );
 void * wrtr_dec( void * );
+
+/*
+ *
+ * Provides for the creation of customised writers
+ * that amend the shared sum by the value of the
+ * 'add' variable.
+ *
+ */
+void writer_helper(int add, s_data input){
+
+	/* lock the data	*/
+	pthread_mutex_lock (&input.data_lock);
+
+	/* write to the data	*/
+	(*input.sum) += add;
+	(*input.writes) ++;
+	if(add > 0) {
+		*input.last_inc = input.thread_id;
+		fprintf(stderr, "Incrementer %d set sum = %d\n", *input.last_dec, *input.sum);
+	} else {
+		*input.last_dec = input.thread_id;
+		fprintf(stderr, "Decrementer %d set sum = %d\n", *input.last_dec, *input.sum);
+	}
+
+	/* unlock the data	*/
+	pthread_mutex_unlock (&input.data_lock);
+
+	return;
+}
 
 int main(int argc, char * argv[]){
 
@@ -88,8 +119,9 @@ int main(int argc, char * argv[]){
 	/*
 	 * Create locks
 	 */
-	pthread_mutex_init (&shared.sum_lock, NULL);
+	pthread_mutex_init (&shared.data_lock, NULL);
 	pthread_mutex_init (&shared.read_lock, NULL);
+
 	/*
 	 * Create threads
 	 */
@@ -141,20 +173,21 @@ void *reader( void *arg ){
 
 	if( *input.reader_count == 1 ){
 		//lock data for reading
-		pthread_mutex_lock (&input.sum_lock);
+		pthread_mutex_lock (&input.data_lock);
 	}
 
 	//unlock reader counter
-	pthread_mutex_unlock (&input.read_lock);
+	//pthread_mutex_unlock (&input.read_lock);
+
 	//read the locked data
 	fprintf(stderr, "Reader %d got %d\n", input.thread_id, *input.sum );
 	//	lock the reader counter
-	pthread_mutex_lock(&input.read_lock);
+	//pthread_mutex_lock(&input.read_lock);
 	(*input.reader_count)--;
 
 	if( *input.reader_count == 0 )
 		//unlock data_lock
-		pthread_mutex_unlock (&input.read_lock);
+		pthread_mutex_unlock (&input.data_lock);
 
 	//unlock reader counter
 	pthread_mutex_unlock (&input.read_lock);
@@ -167,20 +200,9 @@ void *reader( void *arg ){
  * Writer (decrementer)
  */
 void *wrtr_dec( void *arg ){
-
 	s_data input = *((s_data *) arg);
 
-	/* lock the data	*/
-	pthread_mutex_lock (&input.sum_lock);
-
-	/* write to the data	*/
-	(*input.sum) --;
-	(*input.writes) ++;
-	*input.last_dec = input.thread_id;
-	fprintf(stderr, "Decrementer %d set sum = %d\n", *input.last_dec, *input.sum);
-
-	/* unlock the data	*/
-	pthread_mutex_unlock (&input.sum_lock);
+	writer_helper(-1, input);
 	pthread_exit (NULL);
 }
 
@@ -191,15 +213,7 @@ void *wrtr_inc( void *arg ){
 
 	s_data input = *((s_data *) arg);
 
-	/* lock the data	*/
-	pthread_mutex_lock (&input.sum_lock);
-	/* write to the data	*/
-	(*input.sum) ++;
-	(*input.writes) ++;
-	*input.last_inc = input.thread_id;
-	fprintf(stderr, "Incrementer %d set sum = %d\n", *input.last_dec, *input.sum);
-	/* unlock the data	*/
-	pthread_mutex_unlock (&input.sum_lock);
+	writer_helper(1, input);
 	pthread_exit (NULL);
 }
 
